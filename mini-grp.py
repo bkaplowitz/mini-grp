@@ -129,117 +129,155 @@ class Block(nn.Module):
         return x
 
 class GRP(nn.Module):
-  def __init__(self, dataset, cfg, mlp_ratio=4):
-    super(GRP, self).__init__()
-    self._dataset = dataset
-    self._cfg = cfg
-    self.patch_size = (self._cfg.image_shape[0] / self._cfg.n_patches, self._cfg.image_shape[1] / self._cfg.n_patches)
-    #Positional embedding
-    self.register_buffer('positional_embeddings', calc_positional_embeddings(1 + self._cfg.n_patches ** 2 + self._cfg.block_size + self._cfg.n_patches ** 2, cfg.n_embd), persistent=False)
+    def __init__(self, dataset, cfg, mlp_ratio=4):
+        super(GRP, self).__init__()
+        self._dataset = dataset
+        self._cfg = cfg
+        self.patch_size = (
+            self._cfg.image_shape[0] / self._cfg.n_patches,
+            self._cfg.image_shape[1] / self._cfg.n_patches,
+        )
+        # Positional embedding
+        self.register_buffer(
+            "positional_embeddings",
+            calc_positional_embeddings(
+                1
+                + self._cfg.n_patches**2
+                + self._cfg.block_size
+                + self._cfg.n_patches**2,
+                cfg.n_embd,
+            ),
+            persistent=False,
+        )
 
-    self.token_embedding_table = nn.Embedding(cfg.vocab_size, cfg.n_embd)
-    self.class_tokens = nn.Parameter(torch.rand(1, cfg.n_embd))
+        self.token_embedding_table = nn.Embedding(cfg.vocab_size, cfg.n_embd)
+        self.class_tokens = nn.Parameter(torch.rand(1, cfg.n_embd))
 
-    self.input_d = int(self._cfg.image_shape[2] * self.patch_size[0] * self.patch_size[1])
+        self.input_d = int(
+            self._cfg.image_shape[2] * self.patch_size[0] * self.patch_size[1]
+        )
 
-    self.lin_map = nn.Linear(self.input_d, self._cfg.n_embd, bias=False) 
+        self.lin_map = nn.Linear(self.input_d, self._cfg.n_embd, bias=False)
 
-    # 4) Transformer encoder blocks
-    self.blocks = nn.ModuleList([Block(self._cfg.n_embd, self._cfg.n_head, dropout=self._cfg.dropout) for _ in range(self._cfg.n_blocks)])
+        # 4) Transformer encoder blocks
+        self.blocks = nn.ModuleList(
+            [
+                Block(self._cfg.n_embd, self._cfg.n_head, dropout=self._cfg.dropout)
+                for _ in range(self._cfg.n_blocks)
+            ]
+        )
 
-    # 5) Classification MLPk
-    self.mlp = nn.Sequential(
-        nn.Linear(self._cfg.n_embd, self._cfg.action_bins),
-    )
+        # 5) Classification MLPk
+        self.mlp = nn.Sequential(
+            nn.Linear(self._cfg.n_embd, self._cfg.action_bins),
+        )
 
-  def _init_weights(self, module):
-      if isinstance(module, nn.Linear):
-          torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-          if module.bias is not None:
-              torch.nn.init.zeros_(module.bias)
-      elif isinstance(module, nn.Embedding):
-          torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-  def forward(self, images, goals_txt, goal_imgs, targets=None):
-    # Dividing images into patches
-    n, c, h, w = images.shape
-    B, T = goals_txt.shape
-    patches = get_patches_fast(images)
-    patches_g = get_patches_fast(goal_imgs)
-    goals_e = self.token_embedding_table(goals_txt)
-    
-    # Running linear layer tokenization
-    # Map the vector corresponding to each patch to the hidden size dimension
-    out = self.lin_map(patches)
-    out_g = self.lin_map(patches_g)
-    
-    # Adding classification and goal_img tokens to the tokens
-    out = torch.cat((self.class_tokens.expand(n, 1, -1), out, goals_e, out_g), dim=1)
-    
-    # Adding positional embedding
-    out = out + self.positional_embeddings.repeat(n, 1, 1)
+    def forward(self, images, goals_txt, goal_imgs, targets=None):
+        # Dividing images into patches
+        n, c, h, w = images.shape
+        B, T = goals_txt.shape
+        patches = get_patches_fast(images)
+        patches_g = get_patches_fast(goal_imgs)
+        goals_e = self.token_embedding_table(goals_txt)
 
-    ## Compute blocked masks
-    mask = torch.ones((1 + c + T + c, ), device=self._cfg.device) ## (1, T)
-    if targets is None:
-        pass
-    elif (torch.rand(1)[0] > 0.66):  
-        mask[1 + c: 1 + c+ T] = torch.zeros((1,T), device=self._cfg.device) ## Mask goal string
-    elif (torch.rand(1)[0] > 0.33):
-        mask[1 + c + T: 1 + c + T + c] = torch.zeros((1,c), device=self._cfg.device) ## Mask goal image
-        
-    # Transformer Blocks
-    for block in self.blocks:
-        out = block(out, mask)
+        # Running linear layer tokenization
+        # Map the vector corresponding to each patch to the hidden size dimension
+        out = self.lin_map(patches)
+        out_g = self.lin_map(patches_g)
 
-    # Getting the classification token only
-    out = out[:, 0]
-    out = self.mlp(out)
-        
-    if targets is None:
-        loss = None
-    else:
-        B, C = out.shape
-        loss = F.mse_loss(out, targets) ## B, C
-    return (out, loss)
+        # Adding classification and goal_img tokens to the tokens
+        out = torch.cat(
+            (self.class_tokens.expand(n, 1, -1), out, goals_e, out_g), dim=1
+        )
+
+        # Adding positional embedding
+        out = out + self.positional_embeddings.repeat(n, 1, 1)
+
+        ## Compute blocked masks
+        mask = torch.ones((1 + c + T + c,), device=self._cfg.device)  ## (1, T)
+        if targets is None:
+            pass
+        elif torch.rand(1)[0] > 0.66:
+            mask[1 + c : 1 + c + T] = torch.zeros(
+                (1, T), device=self._cfg.device
+            )  ## Mask goal string
+        elif torch.rand(1)[0] > 0.33:
+            mask[1 + c + T : 1 + c + T + c] = torch.zeros(
+                (1, c), device=self._cfg.device
+            )  ## Mask goal image
+
+        # Transformer Blocks
+        for block in self.blocks:
+            out = block(out, mask)
+
+        # Getting the classification token only
+        out = out[:, 0]
+        out = self.mlp(out)
+
+        if targets is None:
+            loss = None
+        else:
+            B, C = out.shape
+            loss = F.mse_loss(out, targets)  ## B, C
+        return (out, loss)
+
 
 import hydra, json
 from omegaconf import DictConfig, OmegaConf
+
 
 # @hydra.main(config_path="conf", config_name="grp-mini")
 @hydra.main(config_path="./conf", config_name="bridge-64-light")
 def my_main(cfg: DictConfig):
     torch.manual_seed(cfg.r_seed)
     log_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
-    print ("cfg:", OmegaConf.to_yaml(cfg))
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print("Using device: ", device, f"({torch.cuda.get_device_name(device)})" if torch.cuda.is_available() else "")
+    print("cfg:", OmegaConf.to_yaml(cfg))
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(
+        "Using device: ",
+        device,
+        f"({torch.cuda.get_device_name(device)})" if torch.cuda.is_available() else "",
+    )
     cfg.device = device
     from datasets import load_dataset, load_from_disk
 
-    dataset = load_dataset(cfg.dataset, split='train')
-    print('Features:', dataset.features)
+    dataset = load_dataset(cfg.dataset, split="train")
+    print("Features:", dataset.features)
 
     dataset_tmp = {
         "img": np.array(dataset["img"]),
-        "action": np.concatenate((np.array(dataset["action"]) 
-                                ,np.array(dataset["rotation_delta"])
-                                ,np.array(dataset["open_gripper"])
-                                ), axis=1),
+        "action": np.concatenate(
+            (
+                np.array(dataset["action"]),
+                np.array(dataset["rotation_delta"]),
+                np.array(dataset["open_gripper"]),
+            ),
+            axis=1,
+        ),
         "goal_img": np.array(dataset["goal_img"]),
-        "goal": dataset["goal"]
+        "goal": dataset["goal"],
     }
     shortest_text_len = min([len(txt) for txt in dataset["goal"]])
     cfg.block_size = shortest_text_len
 
     # here are all the unique characters that occur in this text
-    chars = sorted(list(set([item for row in dataset_tmp["goal"] for item in row]))) ## Flatten to a long string
+    chars = sorted(
+        list(set([item for row in dataset_tmp["goal"] for item in row]))
+    )  ## Flatten to a long string
     cfg.vocab_size = len(chars)
     # create a mapping from characters to integers
-    stoi = { ch:i for i,ch in enumerate(chars) }
-    itos = { i:ch for i,ch in enumerate(chars) }
-    encode_txt = lambda s: [stoi[c] for c in s] # text encoder to tokens: 
-    decode_txy = lambda l: ''.join([itos[i] for i in l]) # token decoder to text: 
+    stoi = {ch: i for i, ch in enumerate(chars)}
+    itos = {i: ch for i, ch in enumerate(chars)}
+    encode_txt = lambda s: [stoi[c] for c in s]  # text encoder to tokens:
+    decode_txy = lambda l: "".join([itos[i] for i in l])  # token decoder to text:
     print("vocab_size:", cfg.vocab_size)
     print("example text encode:", encode_txt(dataset_tmp["goal"][0]))
 
@@ -247,64 +285,86 @@ def my_main(cfg: DictConfig):
         a_std, a_mean = cfg.env.action_std, cfg.env.action_mean
         a_std[6] = cfg.env.gripper_closed_std
     else:
-        a_std, a_mean = (dataset_tmp["action"].std(axis=0) + 0.001) * 1.5, dataset_tmp["action"].mean(axis=0)
+        a_std, a_mean = (
+            (dataset_tmp["action"].std(axis=0) + 0.001) * 1.5,
+            dataset_tmp["action"].mean(axis=0),
+        )
     cfg.action_bins = len(a_mean)
-    encode_action = lambda af:   (((af - a_mean)/(a_std))).astype(np.float32) # encoder: take a float, output an integer
+    encode_action = lambda af: ((af - a_mean) / (a_std)).astype(
+        np.float32
+    )  # encoder: take a float, output an integer
 
     ## Get the actions and encode them to map to [-1, 1]
-    encode_state = lambda af:   ((af/(255.0)*2.0)-1.0).astype(np.float32) # encoder: take a float, output an integer
-    resize_state = lambda sf:   cv2.resize(np.array(sf, dtype=np.float32), (cfg.image_shape[0], cfg.image_shape[1]))  # resize state
+    encode_state = lambda af: ((af / (255.0) * 2.0) - 1.0).astype(
+        np.float32
+    )  # encoder: take a float, output an integer
+    resize_state = lambda sf: cv2.resize(
+        np.array(sf, dtype=np.float32), (cfg.image_shape[0], cfg.image_shape[1])
+    )  # resize state
     decode_action = lambda binN: (binN * a_std) + a_mean  # Undo mapping to [-1, 1]
 
     dataset_tmp = {
         "img": torch.tensor(encode_state(dataset_tmp["img"])).to(device),
-        "action": torch.tensor(encode_action(dataset_tmp["action"]), dtype=torch.float).to(device),            
+        "action": torch.tensor(
+            encode_action(dataset_tmp["action"]), dtype=torch.float
+        ).to(device),
         "goal_img": torch.tensor(encode_state(dataset_tmp["goal_img"])).to(device),
-        "goal": torch.tensor([encode_txt(goal[:cfg.block_size]) for goal in dataset_tmp["goal"]]).to(device)
+        "goal": torch.tensor(
+            [encode_txt(goal[: cfg.block_size]) for goal in dataset_tmp["goal"]]
+        ).to(device),
     }
 
     print("Dataset shape:", len(dataset_tmp["img"]))
-    dataset_tmp = {"train": dataset_tmp, "test": dataset_tmp} 
+    dataset_tmp = {"train": dataset_tmp, "test": dataset_tmp}
     if not cfg.testing:
         import wandb
+
         # start a new wandb run to track this script
         wandb.init(
             # set the wandb project where this run will be logged
             project=cfg.experiment.project,
-
             # track hyperparameters and run metadata
-            config= OmegaConf.to_container(cfg)
+            config=OmegaConf.to_container(cfg),
         )
         wandb.run.log_code(".")
     model = GRP(dataset_tmp, cfg)
     m = model.to(device)
     # print the number of parameters in the model
-    print(sum(p.numel() for p in m.parameters())/1e6, 'M parameters')
+    print(sum(p.numel() for p in m.parameters()) / 1e6, "M parameters")
 
     # create a PyTorch optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
     import torch.optim.lr_scheduler as lr_scheduler
-    scheduler = lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=cfg.max_iters)
+
+    scheduler = lr_scheduler.LinearLR(
+        optimizer, start_factor=1.0, end_factor=0.1, total_iters=cfg.max_iters
+    )
 
     if cfg.simEval:
         import simpler_env
-        from simpler_env.utils.env.observation_utils import get_image_from_maniskill2_obs_dict
+        from simpler_env.utils.env.observation_utils import (
+            get_image_from_maniskill2_obs_dict,
+        )
+
         task_name = "widowx_carrot_on_plate"  # @param ["google_robot_pick_coke_can", "google_robot_move_near", "google_robot_open_drawer", "google_robot_close_drawer", "widowx_spoon_on_towel", "widowx_carrot_on_plate", "widowx_stack_cube", "widowx_put_eggplant_in_basket"]
-        if 'env' in locals():
+        if "env" in locals():
             print("Closing existing env")
             env.close()
             del env
         env = simpler_env.make(task_name)
-        env_unwrapped = env.env.env.env ## Updated gymnasium wrapper adds lots of wrappers.
+        env_unwrapped = (
+            env.env.env.env
+        )  ## Updated gymnasium wrapper adds lots of wrappers.
 
     for iter in range(cfg.max_iters):
-
         # every once in a while evaluate the loss on train and val sets
         if iter % cfg.eval_interval == 0 or iter == cfg.max_iters - 1:
             losses = estimate_loss(model)
-            print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+            print(
+                f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}"
+            )
             if not cfg.testing:
-                wandb.log({"train loss": losses['train'], "val loss": losses['val']})
+                wandb.log({"train loss": losses["train"], "val loss": losses["val"]})
 
             if cfg.simEval and (iter % cfg.eval_vid_iters == 0):
                 obs, reset_info = env.reset()
@@ -317,23 +377,35 @@ def my_main(cfg: DictConfig):
                     # action[:3]: delta xyz; action[3:6]: delta rotation in axis-angle representation;
                     # action[6:7]: gripper (the meaning of open / close depends on robot URDF)
                     image = get_image_from_maniskill2_obs_dict(env_unwrapped, obs)
-                    image = image[:,:,:3] ## Remove last dimension of image color
-                    action, loss = model.forward(torch.tensor(np.array([encode_state(resize_state(image))])).to(device)
-                                        ,torch.tensor(np.array([encode_txt(instruction)[:cfg.block_size]])).to(device)
-                                        ,torch.tensor(np.array([encode_state(resize_state(image))])).to(device) ## Not the correct goal image... Should mask this.
-                                        )
+                    image = image[:, :, :3]  ## Remove last dimension of image color
+                    action, loss = model.forward(
+                        torch.tensor(np.array([encode_state(resize_state(image))])).to(
+                            device
+                        ),
+                        torch.tensor(
+                            np.array([encode_txt(instruction)[: cfg.block_size]])
+                        ).to(device),
+                        torch.tensor(np.array([encode_state(resize_state(image))])).to(
+                            device
+                        ),  ## Not the correct goal image... Should mask this.
+                    )
                     # action = env.action_space.sample() # replace this with your policy inference
                     if cfg.load_action_bounds:
-                        action = decode_action(action.cpu().detach().numpy()[0]) ## Add in the gripper close action
+                        action = decode_action(
+                            action.cpu().detach().numpy()[0]
+                        )  ## Add in the gripper close action
                     else:
-                        action = np.concatenate((decode_action(action.cpu().detach().numpy()[0]), [0]), axis = -1) ## Add in the gripper close action
+                        action = np.concatenate(
+                            (decode_action(action.cpu().detach().numpy()[0]), [0]),
+                            axis=-1,
+                        )  ## Add in the gripper close action
                     # print("action: ", action)
                     obs, reward, done, truncated, info = env.step(action)
                     reward = -np.linalg.norm(info["eof_to_obj1_diff"])
                     frames.append(image)
                     rewards.append(reward)
-                    t=t+1
-                
+                    t = t + 1
+
                 episode_stats = info.get('episode_stats', {})
                 print("Episode stats", episode_stats)
                 print(f"avg reward {np.mean(rewards):.8f}")
