@@ -3,6 +3,7 @@ datasets/
 savedDatasets/
 wandb/
 SimplerEnv/
+mini-grp/
 ManiSkill2_real2sim/
 outputs/
 multirun/

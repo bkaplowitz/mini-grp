@@ -59,5 +59,5 @@ Three model approaches:
 - Text: character-level encoding (no tokenizer), vocab auto-detected
 - Action space: 7-DOF continuous (3D position, 3D rotation, gripper)
 - Experiment tracking: Weights & Biases
-- `mini-grp/` subdirectory is a nested clone of upstream (reference only — do not edit)
+- Upstream reference: `git diff upstream/main` (no nested clone — use `./sync_upstream.sh` to pull)
 - Notebooks (`mini-grp.ipynb`, `mini-vla.ipynb`) are interactive walkthroughs of the training pipelines
