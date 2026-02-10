@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #SBATCH --gres=gpu:a100
 #SBATCH --cpus-per-gpu=8
 #SBATCH --ntasks-per-node=1
@@ -24,10 +24,10 @@ module load miniconda/3
 
 # Activate pre-existing environment.
 conda activate roble
- 
+
 # Fixes issues with MIG-ed GPUs with versions of PyTorch < 2.0
 unset CUDA_VISIBLE_DEVICES
- 
+
 # Execute Python script
 python mini-grp.py --multirun
 # Call main.py with all arguments passed to this script.

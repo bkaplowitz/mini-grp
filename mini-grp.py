@@ -15,7 +15,7 @@ import cv2
 def get_batch_grp(split, dataset, batch_size):
     # generate a small batch of inputs x and targets y
     data = dataset['train'] if split == 'train' else dataset['test']
-    ix = np.random.randint(int(len(data["img"])), size=(batch_size,))
+    ix = np.random.randint(len(data["img"]), size=(batch_size,))
     x = torch.tensor(data["img"][ix], dtype=torch.float)
     x_goal = torch.tensor(data["goal"][ix], dtype=torch.long)
     x_goal_img = torch.tensor(data["goal_img"][ix], dtype=torch.float)
@@ -67,7 +67,7 @@ class Head(nn.Module):
 
     def forward(self, x, mask=None):
         B,T,C = x.shape
-        if mask == None:
+        if mask is None:
             mask = torch.ones((T, ), device=self.device) ## (1, T)
         k = self.key(x)   # (B,T,C)
         q = self.query(x) # (B,T,C)
@@ -265,13 +265,11 @@ def my_main(cfg: DictConfig):
         "goal_img": np.array(dataset["goal_img"]),
         "goal": dataset["goal"],
     }
-    shortest_text_len = min([len(txt) for txt in dataset["goal"]])
+    shortest_text_len = min(len(txt) for txt in dataset["goal"])
     cfg.block_size = shortest_text_len
 
     # here are all the unique characters that occur in this text
-    chars = sorted(
-        list(set([item for row in dataset_tmp["goal"] for item in row]))
-    )  ## Flatten to a long string
+    chars = sorted(list({item for row in dataset_tmp["goal"] for item in row}))
     cfg.vocab_size = len(chars)
     # create a mapping from characters to integers
     stoi = {ch: i for i, ch in enumerate(chars)}
@@ -414,9 +412,11 @@ def my_main(cfg: DictConfig):
                     # wandb.log({"avg reward": np.mean(rewards)})
                 import moviepy.editor as mpy
                 clip = mpy.ImageSequenceClip(list(frames), fps=20)
-                clip.write_videofile(log_dir+"/sim-env-"+str(iter)+".mp4", fps=20)
+                clip.write_videofile(f"{log_dir}/sim-env-{str(iter)}.mp4", fps=20)
                 if not cfg.testing:
-                    wandb.log({"example": wandb.Video(log_dir+"/sim-env-"+str(iter)+".mp4")})
+                    wandb.log(
+                        {"example": wandb.Video(f"{log_dir}/sim-env-{str(iter)}.mp4")}
+                    )
 
         # sample a batch of data
         xb, xg, xgi, yb = get_batch_grp('train', dataset_tmp, cfg.batch_size)
